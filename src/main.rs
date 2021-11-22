@@ -1,12 +1,12 @@
 use x11rb::{connection::Connection, cursor::Handle as CursorHande, protocol::{Event, xproto::{AtomEnum, ColormapAlloc, ConnectionExt, CreateGCAux, CreateWindowAux, EventMask, Gravity, PropMode, Rectangle, WindowClass, free_pixmap}}, resource_manager::Database, wrapper::ConnectionExt as _};
 
 fn main() -> anyhow::Result<()> {
-    let (conn, screen_num) = x11rb::xcb_ffi::XCBConnection::connect(None)?;
+    let (conn, screen_num) = x11rb::connect(None)?;
 
     let screen = &conn.setup().roots[screen_num];
     let window = conn.generate_id()?;
     let gc_id = conn.generate_id()?;
-    let cmap = conn.generate_id()?;
+    // let cmap = conn.generate_id()?;
     let resource_db = Database::new_from_default(&conn)?;
     let cursor_handle = CursorHande::new(&conn, screen_num, &resource_db)?;
 
@@ -20,16 +20,20 @@ fn main() -> anyhow::Result<()> {
     let utf8_str = utf8_str.reply()?.atom;
     let cursor_handle = cursor_handle.reply()?;
 
-    conn.create_colormap(ColormapAlloc::NONE, cmap, window, screen.root_visual)?;
-    let rep = conn.alloc_color(cmap, 0xFF, 0, 0)?;
-    let rep = rep.reply()?;
+    // let cmap = screen.default_colormap;
+    let cmap = conn.generate_id()?;
+    conn.create_colormap(ColormapAlloc::NONE, cmap, window, screen.root_visual)?.check()?;
+    let rep = conn.alloc_color(cmap, 0xFFFF, 0, 0)?.reply()?;
+    
+    let red_pix = rep.pixel;
+
     let win_aux = CreateWindowAux::new()
-        .event_mask(EventMask::EXPOSURE | EventMask::STRUCTURE_NOTIFY | EventMask::NO_EVENT)
+        .event_mask(EventMask::EXPOSURE | EventMask::STRUCTURE_NOTIFY | EventMask::NO_EVENT )
         .background_pixel(screen.black_pixel)
         .win_gravity(Gravity::NORTH_WEST)
         .cursor(cursor_handle.load_cursor(&conn, "wait")?);
 
-    let gc_aux = CreateGCAux::new().foreground(rep.pixel);
+    let gc_aux = CreateGCAux::new().foreground(red_pix);
 
     let (mut width, mut height) = (100, 100);
 
@@ -106,10 +110,12 @@ fn main() -> anyhow::Result<()> {
                 let data = evt.data.as_data32();
                 if evt.format == 32 && evt.window == window && data[0] == wm_delete_window {
                     println!("close event");
-                    return Ok(());
+                    break;
                 }
             }
             _ => println!("Go unknown event"),
         }
     }
+    conn.free_colors(cmap, 0, &[red_pix])?;
+    Ok(())
 }
